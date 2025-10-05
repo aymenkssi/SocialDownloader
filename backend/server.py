@@ -162,22 +162,21 @@ def download_video_generator(url: str, quality: str):
             }
             ext = 'mp3'
         else:
-            # Video quality selection
-            format_str = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+            # Video quality selection - use simpler format that doesn't require merging
+            format_str = 'best[ext=mp4]/best'
             
             if quality == '360p':
-                format_str = 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360][ext=mp4]/best'
+                format_str = 'best[height<=360][ext=mp4]/best[height<=360]/best'
             elif quality == '480p':
-                format_str = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best'
+                format_str = 'best[height<=480][ext=mp4]/best[height<=480]/best'
             elif quality == '720p':
-                format_str = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best'
+                format_str = 'best[height<=720][ext=mp4]/best[height<=720]/best'
             elif quality == '1080p':
-                format_str = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best'
+                format_str = 'best[height<=1080][ext=mp4]/best[height<=1080]/best'
             
             ydl_opts = {
                 'format': format_str,
                 'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
-                'merge_output_format': 'mp4',
                 'ffmpeg_location': ffmpeg_location,
                 'quiet': True,
             }
