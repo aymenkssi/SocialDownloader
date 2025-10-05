@@ -150,8 +150,16 @@ def download_video_generator(url: str, quality: str):
         # Set FFmpeg location
         ffmpeg_location = '/usr/bin/ffmpeg'
         
+        # Common options to bypass YouTube restrictions
+        common_opts = {
+            'nocheckcertificate': True,
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'quiet': True,
+        }
+        
         if quality == 'audio':
             ydl_opts = {
+                **common_opts,
                 'format': 'bestaudio/best',
                 'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
                 'postprocessors': [{
@@ -160,7 +168,6 @@ def download_video_generator(url: str, quality: str):
                     'preferredquality': '192',
                 }],
                 'ffmpeg_location': ffmpeg_location,
-                'quiet': True,
             }
             ext = 'mp3'
         else:
@@ -177,10 +184,10 @@ def download_video_generator(url: str, quality: str):
                 format_str = 'best[height<=1080][ext=mp4]/best[height<=1080]/best'
             
             ydl_opts = {
+                **common_opts,
                 'format': format_str,
                 'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
                 'ffmpeg_location': ffmpeg_location,
-                'quiet': True,
             }
             ext = 'mp4'
         
