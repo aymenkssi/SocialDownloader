@@ -223,16 +223,32 @@ async def download_video(request: DownloadRequest):
             ext = 'mp4'
             content_type = 'video/mp4'
         
-        # Clean filename
-        safe_title = "".join(c for c in info['title'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        # Clean filename - remove all non-ASCII characters
+        import re
+        safe_title = info['title']
+        # Remove special characters but keep spaces, dashes and underscores
+        safe_title = re.sub(r'[^\w\s-]', '', safe_title, flags=re.UNICODE)
+        # Replace multiple spaces with single space
+        safe_title = re.sub(r'\s+', ' ', safe_title)
+        # Convert to ASCII-safe filename
+        safe_title = safe_title.encode('ascii', 'ignore').decode('ascii')
+        safe_title = safe_title.strip()[:100]  # Limit length to 100 chars
+        
+        if not safe_title:
+            safe_title = "video"
+        
         filename = f"{safe_title}.{ext}"
+        
+        # Encode filename for Content-Disposition header (RFC 5987)
+        from urllib.parse import quote
+        encoded_filename = quote(filename)
         
         # Create streaming response
         return StreamingResponse(
             download_video_generator(request.url, request.quality),
             media_type=content_type,
             headers={
-                'Content-Disposition': f'attachment; filename="{filename}"',
+                'Content-Disposition': f"attachment; filename*=UTF-8''{encoded_filename}",
             }
         )
     except Exception as e:
