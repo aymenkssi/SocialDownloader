@@ -295,17 +295,26 @@ async def download_video(request: DownloadRequest):
         from urllib.parse import quote
         encoded_filename = quote(filename)
         
+        logger.info(f"Starting download stream for: {filename}")
+        
         # Create streaming response
         return StreamingResponse(
             download_video_generator(request.url, request.quality),
             media_type=content_type,
             headers={
                 'Content-Disposition': f"attachment; filename*=UTF-8''{encoded_filename}",
+                'Cache-Control': 'no-cache',
             }
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in download endpoint: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Return a proper error message
+        error_msg = str(e)
+        if '403' in error_msg or 'Forbidden' in error_msg:
+            error_msg = "Cette plateforme bloque actuellement les téléchargements. YouTube a des restrictions très strictes. Essayez avec TikTok, Instagram ou Facebook."
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @api_router.get("/")
