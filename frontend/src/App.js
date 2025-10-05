@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import "@/App.css";
 import axios from "axios";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Download, Loader2, Video, Music, AlertCircle, CheckCircle2, ExternalLink } from "lucide-react";
+import AdSenseAd from "@/components/AdSenseAd";
+import PayPalDonateButton from "@/components/PayPalDonateButton";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -39,6 +41,33 @@ function App() {
     { value: "360p", label: "360p" },
     { value: "audio", label: "Audio uniquement (MP3)" }
   ];
+
+  // Charger le script AdSense
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = "https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-7488746561313974";
+    script.async = true;
+    script.crossOrigin = "anonymous";
+    document.head.appendChild(script);
+
+    return () => {
+      // Cleanup
+      if (document.head.contains(script)) {
+        document.head.removeChild(script);
+      }
+    };
+  }, []);
+
+  // Initialiser les annonces après chargement du script
+  useEffect(() => {
+    if (window.adsbygoogle && metadata) {
+      try {
+        (window.adsbygoogle = window.adsbygoogle || []).push({});
+      } catch (e) {
+        console.error('AdSense error:', e);
+      }
+    }
+  }, [metadata]);
 
   const handleAnalyze = async () => {
     if (!url.trim()) {
@@ -128,6 +157,9 @@ function App() {
                   <p className="text-xs text-slate-500">Téléchargez depuis toutes les plateformes</p>
                 </div>
               </div>
+              
+              {/* Bouton donation dans le header */}
+              <PayPalDonateButton variant="header" />
             </div>
           </div>
         </header>
@@ -212,9 +244,14 @@ function App() {
             </CardContent>
           </Card>
 
+          {/* Google AdSense - Entre le formulaire et les métadonnées/instructions */}
+          {metadata && (
+            <AdSenseAd className="my-8" />
+          )}
+
           {/* Metadata Preview */}
           {metadata && (
-            <Card className="shadow-lg border-0 bg-white/90 backdrop-blur-sm" data-testid="metadata-card">
+            <Card className="shadow-lg border-0 bg-white/90 backdrop-blur-sm mb-8" data-testid="metadata-card">
               <CardHeader>
                 <div className="flex items-start justify-between">
                   <div className="flex-1">
@@ -326,6 +363,9 @@ function App() {
               </CardContent>
             </Card>
           )}
+
+          {/* Section Donation - Footer */}
+          <PayPalDonateButton className="mt-12" showMessage={true} />
         </main>
 
         {/* Footer */}
@@ -335,7 +375,7 @@ function App() {
               VideoGrab • Téléchargez vos vidéos préférées en toute simplicité
             </p>
             <p className="text-xs mt-2 text-slate-500">
-              Aucune inscription requise • Sans publicité • Gratuit
+              Aucune inscription requise • Gratuit
             </p>
           </div>
         </footer>
