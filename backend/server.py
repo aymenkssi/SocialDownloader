@@ -154,19 +154,24 @@ def download_video_generator(url: str, quality: str):
         # Common options with enhanced YouTube support
         common_opts = {
             'nocheckcertificate': True,
-            'no_warnings': True,
+            'no_warnings': False,
             'quiet': False,  # Enable logs for debugging
             'no_color': True,
             'extract_flat': False,
             'socket_timeout': 30,
             'retries': 10,
             'fragment_retries': 10,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'skip': ['hls', 'dash'],
+                }
+            },
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language': 'en-us,en;q=0.5',
-                'Accept-Encoding': 'gzip, deflate',
-                'Connection': 'keep-alive',
+                'Sec-Fetch-Mode': 'navigate',
             },
         }
         
