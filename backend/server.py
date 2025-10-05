@@ -144,24 +144,37 @@ async def get_video_metadata(request: VideoURLRequest):
 def download_video_generator(url: str, quality: str):
     """Generator function to stream video download"""
     temp_dir = tempfile.mkdtemp()
+    filename = None
     
     try:
         # Configure yt-dlp options based on quality
         # Set FFmpeg location
         ffmpeg_location = '/usr/bin/ffmpeg'
         
-        # Common options to bypass YouTube restrictions
+        # Common options with enhanced YouTube support
         common_opts = {
             'nocheckcertificate': True,
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'quiet': True,
+            'no_warnings': True,
+            'quiet': False,  # Enable logs for debugging
+            'no_color': True,
+            'extract_flat': False,
+            'socket_timeout': 30,
+            'retries': 10,
+            'fragment_retries': 10,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'en-us,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'Connection': 'keep-alive',
+            },
         }
         
         if quality == 'audio':
             ydl_opts = {
                 **common_opts,
                 'format': 'bestaudio/best',
-                'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
+                'outtmpl': f'{temp_dir}/video.%(ext)s',
                 'postprocessors': [{
                     'key': 'FFmpegExtractAudio',
                     'preferredcodec': 'mp3',
@@ -169,9 +182,9 @@ def download_video_generator(url: str, quality: str):
                 }],
                 'ffmpeg_location': ffmpeg_location,
             }
-            ext = 'mp3'
+            expected_ext = 'mp3'
         else:
-            # Video quality selection - use simpler format that doesn't require merging
+            # Video quality selection - use format that works without merging
             format_str = 'best[ext=mp4]/best'
             
             if quality == '360p':
@@ -186,10 +199,12 @@ def download_video_generator(url: str, quality: str):
             ydl_opts = {
                 **common_opts,
                 'format': format_str,
-                'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
+                'outtmpl': f'{temp_dir}/video.%(ext)s',
                 'ffmpeg_location': ffmpeg_location,
             }
-            ext = 'mp4'
+            expected_ext = 'mp4'
+        
+        logger.info(f"Starting download for URL: {url} with quality: {quality}")
         
         # Download video
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -198,20 +213,39 @@ def download_video_generator(url: str, quality: str):
             
             # If audio extraction, update filename
             if quality == 'audio':
-                filename = filename.rsplit('.', 1)[0] + '.mp3'
+                base_filename = filename.rsplit('.', 1)[0]
+                filename = base_filename + '.mp3'
+            
+            logger.info(f"Video downloaded to: {filename}")
+            
+            # Check if file exists
+            if not os.path.exists(filename):
+                raise Exception(f"Downloaded file not found: {filename}")
+            
+            # Get file size
+            file_size = os.path.getsize(filename)
+            logger.info(f"File size: {file_size} bytes")
+            
+            if file_size == 0:
+                raise Exception("Downloaded file is empty")
             
             # Stream the file
             with open(filename, 'rb') as f:
-                chunk_size = 8192
+                chunk_size = 65536  # 64KB chunks
+                bytes_sent = 0
                 while True:
                     chunk = f.read(chunk_size)
                     if not chunk:
                         break
+                    bytes_sent += len(chunk)
                     yield chunk
+                
+                logger.info(f"Streaming complete. Sent {bytes_sent} bytes")
         
         # Cleanup
         import shutil
         shutil.rmtree(temp_dir, ignore_errors=True)
+        logger.info("Cleanup complete")
         
     except Exception as e:
         logger.error(f"Error downloading video: {str(e)}")
