@@ -100,8 +100,29 @@ function App() {
       const response = await axios.post(
         `${API}/video/download`,
         { url, quality: selectedQuality },
-        { responseType: 'blob' }
+        { 
+          responseType: 'blob',
+          timeout: 120000, // 2 minutes timeout
+          validateStatus: function (status) {
+            return status >= 200 && status < 300; // Only accept successful responses
+          }
+        }
       );
+
+      // Check if response is actually a blob and not empty
+      if (!response.data || response.data.size === 0) {
+        throw new Error("Le fichier téléchargé est vide");
+      }
+
+      // Check if response is an error message in JSON format
+      if (response.data.type === 'application/json') {
+        const text = await response.data.text();
+        const errorData = JSON.parse(text);
+        throw new Error(errorData.detail || "Erreur lors du téléchargement");
+      }
+
+      console.log("Download response size:", response.data.size, "bytes");
+      console.log("Content-Type:", response.headers['content-type']);
 
       // Create blob link to download
       const downloadUrl = window.URL.createObjectURL(new Blob([response.data]));
@@ -111,22 +132,50 @@ function App() {
       // Extract filename from content-disposition header
       const contentDisposition = response.headers['content-disposition'];
       let filename = 'video.mp4';
+      
       if (contentDisposition) {
-        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+        // Handle both standard and RFC 5987 format
+        const filenameMatch = contentDisposition.match(/filename\*=UTF-8''(.+)|filename="?([^"]+)"?/);
         if (filenameMatch) {
-          filename = filenameMatch[1];
+          filename = decodeURIComponent(filenameMatch[1] || filenameMatch[2]);
         }
       }
+      
+      // Determine extension from quality if needed
+      if (selectedQuality === 'audio' && !filename.endsWith('.mp3')) {
+        filename = filename.replace(/\.\w+$/, '.mp3');
+      } else if (!filename.endsWith('.mp4') && selectedQuality !== 'audio') {
+        filename = filename.replace(/\.\w+$/, '.mp4');
+      }
+      
+      console.log("Downloading file:", filename);
       
       link.setAttribute('download', filename);
       document.body.appendChild(link);
       link.click();
       link.remove();
-      window.URL.revokeObjectURL(downloadUrl);
+      
+      // Clean up
+      setTimeout(() => {
+        window.URL.revokeObjectURL(downloadUrl);
+      }, 100);
       
       setSuccess("Téléchargement terminé !");
     } catch (err) {
-      setError(err.response?.data?.detail || "Erreur lors du téléchargement. Veuillez réessayer.");
+      console.error("Download error:", err);
+      
+      // Try to extract error message from blob if it's JSON
+      if (err.response?.data instanceof Blob && err.response.data.type === 'application/json') {
+        try {
+          const text = await err.response.data.text();
+          const errorData = JSON.parse(text);
+          setError(errorData.detail || "Erreur lors du téléchargement");
+        } catch (e) {
+          setError("Erreur lors du téléchargement. Veuillez réessayer.");
+        }
+      } else {
+        setError(err.response?.data?.detail || err.message || "Erreur lors du téléchargement. Veuillez réessayer.");
+      }
     } finally {
       setDownloading(false);
     }
