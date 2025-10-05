@@ -1,14 +1,20 @@
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
 from pathlib import Path
-from pydantic import BaseModel, Field
-from typing import List
+from pydantic import BaseModel, Field, HttpUrl
+from typing import List, Optional, Dict, Any
 import uuid
 from datetime import datetime
+import yt_dlp
+import tempfile
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import json
 
 
 ROOT_DIR = Path(__file__).parent
@@ -25,32 +31,219 @@ app = FastAPI()
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
+# Thread pool for CPU-bound operations
+executor = ThreadPoolExecutor(max_workers=4)
+
 
 # Define Models
-class StatusCheck(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    client_name: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+class VideoURLRequest(BaseModel):
+    url: str
 
-class StatusCheckCreate(BaseModel):
-    client_name: str
+class VideoFormat(BaseModel):
+    format_id: str
+    ext: str
+    resolution: Optional[str] = None
+    filesize: Optional[int] = None
+    format_note: Optional[str] = None
+    vcodec: Optional[str] = None
+    acodec: Optional[str] = None
 
-# Add your routes to the router instead of directly to app
+class VideoMetadata(BaseModel):
+    title: str
+    thumbnail: Optional[str] = None
+    duration: Optional[int] = None
+    uploader: Optional[str] = None
+    platform: str
+    webpage_url: str
+    formats: List[Dict[str, Any]] = []
+
+class DownloadRequest(BaseModel):
+    url: str
+    format_id: Optional[str] = None
+    quality: Optional[str] = "best"  # best, 1080p, 720p, 480p, 360p, audio
+
+
+# Platform detection
+def detect_platform(url: str) -> str:
+    """Detect the platform from URL"""
+    url_lower = url.lower()
+    if 'youtube.com' in url_lower or 'youtu.be' in url_lower:
+        return 'YouTube'
+    elif 'tiktok.com' in url_lower:
+        return 'TikTok'
+    elif 'instagram.com' in url_lower:
+        return 'Instagram'
+    elif 'facebook.com' in url_lower or 'fb.watch' in url_lower:
+        return 'Facebook'
+    elif 'twitter.com' in url_lower or 'x.com' in url_lower:
+        return 'Twitter/X'
+    elif 'linkedin.com' in url_lower:
+        return 'LinkedIn'
+    else:
+        return 'Unknown'
+
+
+def extract_video_info(url: str) -> dict:
+    """Extract video information using yt-dlp"""
+    ydl_opts = {
+        'quiet': True,
+        'no_warnings': True,
+        'extract_flat': False,
+    }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            
+            # Process formats to include useful information
+            formats = []
+            if 'formats' in info:
+                for fmt in info['formats']:
+                    format_data = {
+                        'format_id': fmt.get('format_id'),
+                        'ext': fmt.get('ext'),
+                        'resolution': fmt.get('resolution') or f"{fmt.get('height', 'audio')}p",
+                        'filesize': fmt.get('filesize'),
+                        'format_note': fmt.get('format_note'),
+                        'vcodec': fmt.get('vcodec'),
+                        'acodec': fmt.get('acodec'),
+                        'height': fmt.get('height'),
+                    }
+                    formats.append(format_data)
+            
+            return {
+                'title': info.get('title', 'Unknown'),
+                'thumbnail': info.get('thumbnail'),
+                'duration': info.get('duration'),
+                'uploader': info.get('uploader') or info.get('channel'),
+                'platform': detect_platform(url),
+                'webpage_url': info.get('webpage_url', url),
+                'formats': formats,
+            }
+    except Exception as e:
+        logger.error(f"Error extracting video info: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to extract video info: {str(e)}")
+
+
+@api_router.post("/video/metadata")
+async def get_video_metadata(request: VideoURLRequest):
+    """Get video metadata from URL"""
+    try:
+        loop = asyncio.get_event_loop()
+        info = await loop.run_in_executor(executor, extract_video_info, request.url)
+        return info
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting metadata: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def download_video_generator(url: str, quality: str):
+    """Generator function to stream video download"""
+    temp_dir = tempfile.mkdtemp()
+    
+    try:
+        # Configure yt-dlp options based on quality
+        if quality == 'audio':
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'quiet': True,
+            }
+            ext = 'mp3'
+        else:
+            # Video quality selection
+            format_str = 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'
+            
+            if quality == '360p':
+                format_str = 'bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360][ext=mp4]/best'
+            elif quality == '480p':
+                format_str = 'bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480][ext=mp4]/best'
+            elif quality == '720p':
+                format_str = 'bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720][ext=mp4]/best'
+            elif quality == '1080p':
+                format_str = 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080][ext=mp4]/best'
+            
+            ydl_opts = {
+                'format': format_str,
+                'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
+                'merge_output_format': 'mp4',
+                'quiet': True,
+            }
+            ext = 'mp4'
+        
+        # Download video
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            
+            # If audio extraction, update filename
+            if quality == 'audio':
+                filename = filename.rsplit('.', 1)[0] + '.mp3'
+            
+            # Stream the file
+            with open(filename, 'rb') as f:
+                chunk_size = 8192
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+        
+        # Cleanup
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        
+    except Exception as e:
+        logger.error(f"Error downloading video: {str(e)}")
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+
+@api_router.post("/video/download")
+async def download_video(request: DownloadRequest):
+    """Download video and stream to user"""
+    try:
+        # Get video info first to get title
+        loop = asyncio.get_event_loop()
+        info = await loop.run_in_executor(executor, extract_video_info, request.url)
+        
+        # Determine file extension and content type
+        if request.quality == 'audio':
+            ext = 'mp3'
+            content_type = 'audio/mpeg'
+        else:
+            ext = 'mp4'
+            content_type = 'video/mp4'
+        
+        # Clean filename
+        safe_title = "".join(c for c in info['title'] if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        filename = f"{safe_title}.{ext}"
+        
+        # Create streaming response
+        return StreamingResponse(
+            download_video_generator(request.url, request.quality),
+            media_type=content_type,
+            headers={
+                'Content-Disposition': f'attachment; filename="{filename}"',
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error in download endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @api_router.get("/")
 async def root():
-    return {"message": "Hello World"}
+    return {"message": "Video Downloader API"}
 
-@api_router.post("/status", response_model=StatusCheck)
-async def create_status_check(input: StatusCheckCreate):
-    status_dict = input.dict()
-    status_obj = StatusCheck(**status_dict)
-    _ = await db.status_checks.insert_one(status_obj.dict())
-    return status_obj
-
-@api_router.get("/status", response_model=List[StatusCheck])
-async def get_status_checks():
-    status_checks = await db.status_checks.find().to_list(1000)
-    return [StatusCheck(**status_check) for status_check in status_checks]
 
 # Include the router in the main app
 app.include_router(api_router)
@@ -73,3 +266,4 @@ logger = logging.getLogger(__name__)
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+    executor.shutdown(wait=False)

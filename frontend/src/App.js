@@ -1,52 +1,345 @@
-import { useEffect } from "react";
+import { useState } from "react";
 import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
 import axios from "axios";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Download, Loader2, Video, Music, AlertCircle, CheckCircle2, ExternalLink } from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-const Home = () => {
-  const helloWorldApi = async () => {
+function App() {
+  const [url, setUrl] = useState("");
+  const [metadata, setMetadata] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [selectedQuality, setSelectedQuality] = useState("best");
+
+  const platformIcons = {
+    'YouTube': '🎥',
+    'TikTok': '🎵',
+    'Instagram': '📸',
+    'Facebook': '👥',
+    'Twitter/X': '🐦',
+    'LinkedIn': '💼',
+    'Unknown': '📹'
+  };
+
+  const qualityOptions = [
+    { value: "best", label: "Meilleure qualité (MP4)" },
+    { value: "1080p", label: "1080p (Full HD)" },
+    { value: "720p", label: "720p (HD)" },
+    { value: "480p", label: "480p" },
+    { value: "360p", label: "360p" },
+    { value: "audio", label: "Audio uniquement (MP3)" }
+  ];
+
+  const handleAnalyze = async () => {
+    if (!url.trim()) {
+      setError("Veuillez entrer une URL valide");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setSuccess("");
+    setMetadata(null);
+
     try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
+      const response = await axios.post(`${API}/video/metadata`, { url });
+      setMetadata(response.data);
+      setSuccess("Vidéo analysée avec succès !");
+    } catch (err) {
+      setError(err.response?.data?.detail || "Erreur lors de l'analyse de l'URL. Vérifiez que le lien est valide.");
+    } finally {
+      setLoading(false);
     }
   };
 
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
+  const handleDownload = async () => {
+    setDownloading(true);
+    setError("");
+    setSuccess("");
 
-  return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
+    try {
+      const response = await axios.post(
+        `${API}/video/download`,
+        { url, quality: selectedQuality },
+        { responseType: 'blob' }
+      );
 
-function App() {
+      // Create blob link to download
+      const downloadUrl = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      
+      // Extract filename from content-disposition header
+      const contentDisposition = response.headers['content-disposition'];
+      let filename = 'video.mp4';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="(.+)"/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      
+      link.setAttribute('download', filename);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+      
+      setSuccess("Téléchargement terminé !");
+    } catch (err) {
+      setError(err.response?.data?.detail || "Erreur lors du téléchargement. Veuillez réessayer.");
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const formatDuration = (seconds) => {
+    if (!seconds) return "N/A";
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
   return (
     <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50">
+        {/* Header */}
+        <header className="border-b bg-white/80 backdrop-blur-md sticky top-0 z-50 shadow-sm">
+          <div className="container mx-auto px-4 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-600 to-indigo-600 rounded-xl flex items-center justify-center">
+                  <Video className="w-6 h-6 text-white" />
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                    VideoGrab
+                  </h1>
+                  <p className="text-xs text-slate-500">Téléchargez depuis toutes les plateformes</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        {/* Main Content */}
+        <main className="container mx-auto px-4 py-12 max-w-4xl">
+          {/* Hero Section */}
+          <div className="text-center mb-12">
+            <h2 className="text-4xl md:text-5xl font-bold text-slate-800 mb-4">
+              Téléchargez vos vidéos préférées
+            </h2>
+            <p className="text-lg text-slate-600 max-w-2xl mx-auto">
+              Collez simplement l'URL de votre vidéo et téléchargez-la en quelques secondes. 
+              Compatible avec YouTube, TikTok, Instagram, Facebook, Twitter/X et LinkedIn.
+            </p>
+          </div>
+
+          {/* Supported Platforms */}
+          <div className="flex flex-wrap justify-center gap-3 mb-8">
+            {Object.entries(platformIcons).filter(([key]) => key !== 'Unknown').map(([platform, icon]) => (
+              <Badge key={platform} variant="secondary" className="text-sm py-2 px-4 bg-white shadow-sm">
+                <span className="mr-2">{icon}</span>
+                {platform}
+              </Badge>
+            ))}
+          </div>
+
+          {/* Input Section */}
+          <Card className="mb-8 shadow-lg border-0 bg-white/90 backdrop-blur-sm" data-testid="url-input-card">
+            <CardHeader>
+              <CardTitle>Entrez l'URL de la vidéo</CardTitle>
+              <CardDescription>
+                Copiez et collez le lien de votre vidéo depuis n'importe quelle plateforme supportée
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex gap-2">
+                <Input
+                  data-testid="url-input"
+                  type="url"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleAnalyze()}
+                  className="flex-1 text-base"
+                />
+                <Button 
+                  data-testid="analyze-button"
+                  onClick={handleAnalyze} 
+                  disabled={loading || !url.trim()}
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                >
+                  {loading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Analyse...
+                    </>
+                  ) : (
+                    <>
+                      <ExternalLink className="mr-2 h-4 w-4" />
+                      Analyser
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              {/* Error Alert */}
+              {error && (
+                <Alert variant="destructive" data-testid="error-alert">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
+              {/* Success Alert */}
+              {success && (
+                <Alert className="bg-green-50 text-green-900 border-green-200" data-testid="success-alert">
+                  <CheckCircle2 className="h-4 w-4" />
+                  <AlertDescription>{success}</AlertDescription>
+                </Alert>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Metadata Preview */}
+          {metadata && (
+            <Card className="shadow-lg border-0 bg-white/90 backdrop-blur-sm" data-testid="metadata-card">
+              <CardHeader>
+                <div className="flex items-start justify-between">
+                  <div className="flex-1">
+                    <CardTitle className="text-2xl mb-2">{metadata.title}</CardTitle>
+                    <div className="flex flex-wrap gap-2 text-sm text-slate-600">
+                      {metadata.uploader && (
+                        <span className="flex items-center gap-1">
+                          <Badge variant="outline">{metadata.uploader}</Badge>
+                        </span>
+                      )}
+                      <Badge className="bg-gradient-to-r from-blue-600 to-indigo-600">
+                        <span className="mr-1">{platformIcons[metadata.platform] || '📹'}</span>
+                        {metadata.platform}
+                      </Badge>
+                      {metadata.duration && (
+                        <Badge variant="secondary">
+                          ⏱️ {formatDuration(metadata.duration)}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Thumbnail */}
+                {metadata.thumbnail && (
+                  <div className="rounded-lg overflow-hidden shadow-md">
+                    <img 
+                      src={metadata.thumbnail} 
+                      alt={metadata.title}
+                      className="w-full h-auto"
+                      data-testid="video-thumbnail"
+                    />
+                  </div>
+                )}
+
+                {/* Quality Selection */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">
+                    Sélectionnez la qualité
+                  </label>
+                  <Select value={selectedQuality} onValueChange={setSelectedQuality}>
+                    <SelectTrigger data-testid="quality-selector">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {qualityOptions.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Download Button */}
+                <Button 
+                  data-testid="download-button"
+                  onClick={handleDownload}
+                  disabled={downloading}
+                  className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-lg py-6"
+                  size="lg"
+                >
+                  {downloading ? (
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      Téléchargement en cours...
+                    </>
+                  ) : (
+                    <>
+                      {selectedQuality === 'audio' ? (
+                        <Music className="mr-2 h-5 w-5" />
+                      ) : (
+                        <Download className="mr-2 h-5 w-5" />
+                      )}
+                      Télécharger
+                    </>
+                  )}
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Instructions */}
+          {!metadata && (
+            <Card className="mt-8 bg-gradient-to-br from-blue-50 to-indigo-50 border-0 shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-xl">Comment ça marche ?</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ol className="space-y-3 text-slate-700">
+                  <li className="flex gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-sm flex items-center justify-center font-bold">1</span>
+                    <span>Copiez l'URL de la vidéo depuis YouTube, TikTok, Instagram ou toute autre plateforme supportée</span>
+                  </li>
+                  <li className="flex gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-sm flex items-center justify-center font-bold">2</span>
+                    <span>Collez le lien dans le champ ci-dessus et cliquez sur "Analyser"</span>
+                  </li>
+                  <li className="flex gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-sm flex items-center justify-center font-bold">3</span>
+                    <span>Choisissez la qualité souhaitée (vidéo ou audio uniquement)</span>
+                  </li>
+                  <li className="flex gap-3">
+                    <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-600 text-white text-sm flex items-center justify-center font-bold">4</span>
+                    <span>Cliquez sur "Télécharger" et profitez de votre vidéo !</span>
+                  </li>
+                </ol>
+              </CardContent>
+            </Card>
+          )}
+        </main>
+
+        {/* Footer */}
+        <footer className="border-t bg-white/80 backdrop-blur-md mt-20 py-8">
+          <div className="container mx-auto px-4 text-center text-slate-600">
+            <p className="text-sm">
+              VideoGrab • Téléchargez vos vidéos préférées en toute simplicité
+            </p>
+            <p className="text-xs mt-2 text-slate-500">
+              Aucune inscription requise • Sans publicité • Gratuit
+            </p>
+          </div>
+        </footer>
+      </div>
     </div>
   );
 }
