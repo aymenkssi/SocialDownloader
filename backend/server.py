@@ -259,15 +259,98 @@ def download_video_generator(url: str, quality: str):
         raise
 
 
+def download_and_prepare_file(url: str, quality: str):
+    """Download video to temporary file and return path"""
+    temp_dir = tempfile.mkdtemp()
+    filename = None
+    
+    try:
+        # Configure yt-dlp options
+        ffmpeg_location = '/usr/bin/ffmpeg'
+        
+        common_opts = {
+            'nocheckcertificate': True,
+            'no_warnings': False,
+            'quiet': False,
+            'no_color': True,
+            'socket_timeout': 30,
+            'retries': 10,
+            'fragment_retries': 10,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['android', 'web'],
+                    'skip': ['hls', 'dash'],
+                }
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            },
+        }
+        
+        if quality == 'audio':
+            ydl_opts = {
+                **common_opts,
+                'format': 'bestaudio/best',
+                'outtmpl': f'{temp_dir}/video.%(ext)s',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'ffmpeg_location': ffmpeg_location,
+            }
+        else:
+            format_str = 'best[ext=mp4]/best'
+            if quality == '360p':
+                format_str = 'best[height<=360][ext=mp4]/best[height<=360]/best'
+            elif quality == '480p':
+                format_str = 'best[height<=480][ext=mp4]/best[height<=480]/best'
+            elif quality == '720p':
+                format_str = 'best[height<=720][ext=mp4]/best[height<=720]/best'
+            elif quality == '1080p':
+                format_str = 'best[height<=1080][ext=mp4]/best[height<=1080]/best'
+            
+            ydl_opts = {
+                **common_opts,
+                'format': format_str,
+                'outtmpl': f'{temp_dir}/video.%(ext)s',
+                'ffmpeg_location': ffmpeg_location,
+            }
+        
+        # Download
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            
+            if quality == 'audio':
+                base = filename.rsplit('.', 1)[0]
+                filename = base + '.mp3'
+            
+            if not os.path.exists(filename):
+                raise Exception(f"Fichier non trouvé après téléchargement")
+            
+            file_size = os.path.getsize(filename)
+            if file_size == 0:
+                raise Exception("Fichier vide")
+            
+            logger.info(f"Téléchargé: {filename} ({file_size} bytes)")
+            return filename, temp_dir
+            
+    except Exception as e:
+        import shutil
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+
 @api_router.post("/video/download")
 async def download_video(request: DownloadRequest):
     """Download video and stream to user"""
     try:
-        # Get video info first to get title
+        # Get video info first
         loop = asyncio.get_event_loop()
         info = await loop.run_in_executor(executor, extract_video_info, request.url)
         
-        # Determine file extension and content type
+        # Determine extension and content type
         if request.quality == 'audio':
             ext = 'mp3'
             content_type = 'audio/mpeg'
@@ -275,31 +358,49 @@ async def download_video(request: DownloadRequest):
             ext = 'mp4'
             content_type = 'video/mp4'
         
-        # Clean filename - remove all non-ASCII characters
+        # Clean filename
         import re
         safe_title = info['title']
-        # Remove special characters but keep spaces, dashes and underscores
         safe_title = re.sub(r'[^\w\s-]', '', safe_title, flags=re.UNICODE)
-        # Replace multiple spaces with single space
         safe_title = re.sub(r'\s+', ' ', safe_title)
-        # Convert to ASCII-safe filename
         safe_title = safe_title.encode('ascii', 'ignore').decode('ascii')
-        safe_title = safe_title.strip()[:100]  # Limit length to 100 chars
+        safe_title = safe_title.strip()[:100]
         
         if not safe_title:
             safe_title = "video"
         
         filename = f"{safe_title}.{ext}"
         
-        # Encode filename for Content-Disposition header (RFC 5987)
         from urllib.parse import quote
         encoded_filename = quote(filename)
         
-        logger.info(f"Starting download stream for: {filename}")
+        logger.info(f"Début du téléchargement: {filename}")
         
-        # Create streaming response
+        # Download file first (this will raise exception if it fails)
+        file_path, temp_dir = await loop.run_in_executor(
+            executor, 
+            download_and_prepare_file, 
+            request.url, 
+            request.quality
+        )
+        
+        # Stream the downloaded file
+        def file_stream():
+            try:
+                with open(file_path, 'rb') as f:
+                    chunk_size = 65536
+                    while True:
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        yield chunk
+            finally:
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                logger.info("Nettoyage terminé")
+        
         return StreamingResponse(
-            download_video_generator(request.url, request.quality),
+            file_stream(),
             media_type=content_type,
             headers={
                 'Content-Disposition': f"attachment; filename*=UTF-8''{encoded_filename}",
@@ -309,11 +410,12 @@ async def download_video(request: DownloadRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in download endpoint: {str(e)}")
-        # Return a proper error message
+        logger.error(f"Erreur téléchargement: {str(e)}")
         error_msg = str(e)
         if '403' in error_msg or 'Forbidden' in error_msg:
-            error_msg = "Cette plateforme bloque actuellement les téléchargements. YouTube a des restrictions très strictes. Essayez avec TikTok, Instagram ou Facebook."
+            error_msg = "⚠️ YouTube bloque actuellement les téléchargements (Erreur 403). Essayez avec TikTok, Instagram ou Facebook."
+        elif 'HTTP Error' in error_msg:
+            error_msg = f"Erreur de connexion: {error_msg}"
         raise HTTPException(status_code=500, detail=error_msg)
 
 
