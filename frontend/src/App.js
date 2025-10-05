@@ -372,7 +372,7 @@ function App() {
         <footer className="border-t bg-white/80 backdrop-blur-md mt-20 py-8">
           <div className="container mx-auto px-4 text-center text-slate-600">
             <p className="text-sm">
-              VideoGrab • Téléchargez vos vidéos préférées en toute simplicité
+              SocialDownloader • Téléchargez vos vidéos préférées en toute simplicité
             </p>
             <p className="text-xs mt-2 text-slate-500">
               Aucune inscription requise • Gratuit
