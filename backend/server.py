@@ -145,6 +145,9 @@ def download_video_generator(url: str, quality: str):
     
     try:
         # Configure yt-dlp options based on quality
+        # Set FFmpeg location
+        ffmpeg_location = '/usr/bin/ffmpeg'
+        
         if quality == 'audio':
             ydl_opts = {
                 'format': 'bestaudio/best',
@@ -154,6 +157,7 @@ def download_video_generator(url: str, quality: str):
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
                 }],
+                'ffmpeg_location': ffmpeg_location,
                 'quiet': True,
             }
             ext = 'mp3'
@@ -174,6 +178,7 @@ def download_video_generator(url: str, quality: str):
                 'format': format_str,
                 'outtmpl': f'{temp_dir}/%(title)s.%(ext)s',
                 'merge_output_format': 'mp4',
+                'ffmpeg_location': ffmpeg_location,
                 'quiet': True,
             }
             ext = 'mp4'
